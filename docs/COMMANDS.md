@@ -15,6 +15,8 @@ checkout -> tracking -> post-sale.
 1688 image-search <pathOrUrl>     # local .jpg/.png/.webp or http(s) URL
 1688 image-search <pathOrUrl> --headed  # complete a requested slider in the search tab
 1688 image-search <pathOrUrl> --headed --firefox-executable <binary> --firefox-profile-dir <directory>
+1688 source-photo <pathOrUrl> --title "Product description" --output result.json
+1688 source-photo --rows 10:19 --write --output report.json
 1688 offer <offerId>              # product detail, SKUs, price tiers, package info
 1688 offer <offerId...> --pro     # batch details, bypassing daemon health pause
 1688 compare <offerId...>         # compare offer details for sourcing
@@ -28,6 +30,12 @@ minutes when 1688 requests a slider. Complete the verification in that tab.
 The CLI reads the results opened by the upload form, including when it opens
 a new tab. The optional Firefox arguments select a local executable and a
 persistent profile directory for this command.
+
+`source-photo` compares up to 60 listing photos, reads SKU options on shortlisted
+offers, and returns up to three factories with visual confidence and minimum
+order quotes. It uses the local vision model and a user-operated Camoufox
+session. The sheet form reads B/D/E and writes to T/U with `--write`.
+Setup and field definitions are in [photo sourcing](../sourcing/README.md).
 
 Research-oriented `search` filters:
 

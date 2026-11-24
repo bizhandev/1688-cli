@@ -40,6 +40,12 @@
   },
   "files": [
     "dist",
+    "sourcing/*.mjs",
+    "sourcing/visual_rank.py",
+    "sourcing/package.json",
+    "sourcing/package-lock.json",
+    "sourcing/requirements-visual.txt",
+    "sourcing/README.md",
     "scripts/postinstall.mjs",
     "scripts/fix_bin_mode.mjs",
     "scripts/generate_agent_context.mjs",

@@ -79,7 +79,7 @@ export async function detectPageState(page: Page): Promise<PageState> {
     title: document.title,
     text: (document.body?.innerText ?? '').slice(0, 20_000),
     visibleChallenge: Array.from(document.querySelectorAll(
-      '#nocaptcha, iframe[src*="/punish" i], iframe[src*="/captcha/" i]',
+      '#nocaptcha, iframe[src*="/punish" i], iframe[src*="captcha" i]',
     )).some(el => {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility === 'visible';

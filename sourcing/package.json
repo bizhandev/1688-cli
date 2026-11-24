@@ -1,0 +1,11 @@
+{
+  "name": "1688-photo-sourcing",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/rus": "1.0.0",
+    "google-auth-library": "11.3.4",
+    "tesseract.js": "7.0.0"
+  }
+}

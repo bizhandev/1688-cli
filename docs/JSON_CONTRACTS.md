@@ -195,6 +195,34 @@ image-search shell, JSON error output uses:
 }
 ```
 
+## `source-photo`
+
+A photo result includes a status and up to three different manufacturers. The
+sheet form returns `{ rows_requested, rows_processed, results }`. A result in
+that array also names its row, source image, SKU and sheet write outcome.
+`duration_ms` and `verification_requests` describe each row. The batch reports
+`elapsed_ms`, the total number of verification prompts and `rows_without_verification`.
+
+```ts
+{
+  status: "ok" | "no_matches" | "no_verified_factory_match" | "details_unavailable"
+    | "image_error" | "search_error" | "interrupted",
+  gate?: "RISK_CONTROL" | "NOT_LOGGED_IN" | "RATE_LIMITED" | "CANCELED",
+  offers: Array<{
+    url: string, seller: string, variant: string, search_rank: number,
+    match_confidence_pct: number, identity_confirmed: boolean,
+    factory_evidence: string, factory_sales: object | null, sales_compared: boolean,
+    quote_confirmed: boolean, unit_price_cny: number | null,
+    min_order: number | null, min_order_unit: string | null, lot_price_cny: number | null
+  }>
+}
+```
+
+Confidence is an uncalibrated visual and attribute score from 0 to 100. The
+quote applies to the selected SKU at its minimum order quantity. Shop sales
+can break a tie within three confidence points when the metric and time
+window match. An interrupted result can retain previously inspected offers.
+
 ## `research`
 
 Normal JSON result:

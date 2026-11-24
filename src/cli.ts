@@ -161,6 +161,22 @@ supplier
   });
 
 program
+  .command('source-photo')
+  .description('Rank factory offers by SKU photo and quote the minimum order')
+  .argument('[imagePathOrUrl]', 'Photo file or HTTP(S) URL')
+  .option('--title <text>', 'Product name or attributes for the reference photo')
+  .option('--rows <range>', 'Spreadsheet row or inclusive range, e.g. 10:19')
+  .option('--write', 'Write factory links and minimum-order quotes to the configured sheet')
+  .option('--priority <row>', 'Process this sheet row first')
+  .option('--details <n>', 'Maximum shortlisted offers to inspect, from 1 to 60', '12')
+  .option('--output <file>', 'Save the JSON report after every row')
+  .option('--headless', 'Stop with a status if the site requires manual verification')
+  .action(async (imagePath, opts) => {
+    const { run } = await import('./commands/source-photo.js');
+    await run({ ...opts, imagePath });
+  });
+
+program
   .command('image-search')
   .description('Search 1688 by image (local file or http(s) URL)')
   .argument('<imagePathOrUrl>', 'Local file path OR http(s) image URL')

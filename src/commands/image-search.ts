@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { channel } from 'node:diagnostics_channel';
 import path from 'node:path';
 import os from 'node:os';
 import type { BrowserContext, Page } from 'playwright';
@@ -28,6 +29,7 @@ export interface ImageSearchArgs {
   imagePath: string;
   max: number;
   headed?: boolean;
+  manualVerificationMs?: number;
 }
 
 export interface ImageSearchResult {
@@ -103,10 +105,10 @@ export async function execute(
           resultTab = page;
           captures.get(page)!.dispose();
           captures.set(page, captureImageOffers(page));
-        });
+        }, args.manualVerificationMs);
         info(`Image uploaded (imageId=${imageId}). Fetching results...`);
       }
-      const offers = await searchByImageId(resultTab, imageId, headed, captures.get(resultTab)!);
+      const offers = await searchByImageId(resultTab, imageId, headed, captures.get(resultTab)!, args.manualVerificationMs);
       return { imageId, total: offers.length, offers: offers.slice(0, args.max) };
     }, { headed, maxRetries: 1 });
   } finally {
@@ -124,21 +126,28 @@ async function imagePageState(page: Page) {
   return state;
 }
 
-async function waitForManualVerification(page: Page, headed: boolean): Promise<boolean> {
-  if ((await imagePageState(page)).kind !== 'risk_challenge') return false;
+export async function waitForManualVerification(page: Page, headed: boolean, timeoutMs = 180_000): Promise<boolean> {
+  const initial = await imagePageState(page);
+  if (initial.kind !== 'risk_challenge') return false;
   if (!headed) throw new CliError(4, 'RISK_CONTROL', '1688 requires slider verification. Run once with --headed.');
-  process.stderr.write('1688 is asking you to verify. Complete the slider in this tab; image search will resume here.\n');
+  const host = new URL(initial.url).hostname;
+  channel('1688.manual-verification').publish({ host });
+  process.stderr.write(`1688 is asking you to verify on ${host} (${initial.indicators.join(', ')}). Complete the slider in this tab.\n`);
   await withTimeout(page.bringToFront().catch(() => {}), { timeoutMs: 1500, fallback: undefined });
   let reportedWidgetError = false;
+  let normalUrl: string | undefined;
   const cleared = await waitUntil(async () => {
     const state = await imagePageState(page);
     if (!reportedWidgetError && state.indicators.includes('verification-widget-error')) {
       process.stderr.write('1688 reports a verification error and asks you to refresh this tab.\n');
       reportedWidgetError = true;
     }
-    return state.kind === 'normal_1688_page';
-  }, { timeoutMs: 180_000, intervalMs: 500 });
-  if (!cleared) throw new CliError(4, 'RISK_CONTROL', '1688 still requires manual verification after 3 minutes.');
+    const stable = state.kind === 'normal_1688_page' && state.url === normalUrl;
+    normalUrl = state.kind === 'normal_1688_page' ? state.url : undefined;
+    return stable;
+  }, { timeoutMs, intervalMs: 500 });
+  if (!cleared) throw new CliError(4, 'RISK_CONTROL', `1688 still requires manual verification after ${Math.round(timeoutMs / 60_000)} minutes.`);
+  process.stderr.write('1688 accepted the verification. Resuming in the same session.\n');
   return true;
 }
 
@@ -149,7 +158,7 @@ function uploadedImageId(page: Page): string | null {
 }
 
 async function uploadAndGetImageId(
-  page: Page, imagePath: string, headed: boolean, resultTab: () => Page, beforeSubmit: () => void,
+  page: Page, imagePath: string, headed: boolean, resultTab: () => Page, beforeSubmit: () => void, manualVerificationMs?: number,
 ): Promise<string> {
   await page.goto(IMAGE_SEARCH_UPLOAD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const reopenForm = async () => {
@@ -157,7 +166,7 @@ async function uploadAndGetImageId(
       await page.goto(IMAGE_SEARCH_UPLOAD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     }
   };
-  if (await waitForManualVerification(page, headed)) await reopenForm();
+  if (await waitForManualVerification(page, headed, manualVerificationMs)) await reopenForm();
 
   for (let attempt = 0; ; attempt++) {
     try {
@@ -177,7 +186,7 @@ async function uploadAndGetImageId(
       throw new CliError(13, 'UPLOAD_FAILED', '1688 did not return an image ID after upload.');
     } catch (error) {
       const tab = resultTab();
-      if (!await waitForManualVerification(tab, headed)) throw error;
+      if (!await waitForManualVerification(tab, headed, manualVerificationMs)) throw error;
       const imageId = uploadedImageId(tab);
       if (imageId) return imageId;
       // A verification redirect can reset the upload form. Resubmit only after the user clears it.
@@ -188,7 +197,7 @@ async function uploadAndGetImageId(
 }
 
 async function searchByImageId(
-  page: Page, imageId: string, headed: boolean, capture: ReturnType<typeof captureImageOffers>,
+  page: Page, imageId: string, headed: boolean, capture: ReturnType<typeof captureImageOffers>, manualVerificationMs?: number,
 ): Promise<Offer[]> {
   const waitForOffers = () => capture.wait({
     timeoutMs: 15_000,
@@ -208,7 +217,7 @@ async function searchByImageId(
     if (attempt > 0 && result.status === 'blocked') {
       throw new CliError(4, 'RISK_CONTROL', '1688 requested verification again.');
     }
-    const verified = await waitForManualVerification(page, headed);
+    const verified = await waitForManualVerification(page, headed, manualVerificationMs);
     if (verified || result.status === 'blocked') {
       if (uploadedImageId(page) !== imageId) await openResults();
       continue;
