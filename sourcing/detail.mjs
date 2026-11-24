@@ -234,7 +234,7 @@ function headerTiers(header) {
 }
 
 export function quoteVariant(row, rawHeader, dimensions = 1) {
-  const header = numberText(rawHeader || '');
+  let header = numberText(rawHeader || '');
   const evidence = [row.row_text, rawHeader].filter(Boolean).join(' | ');
   const review = (reason) => ({
     price_cny: null,
@@ -246,6 +246,17 @@ export function quoteVariant(row, rawHeader, dimensions = 1) {
     evidence,
   });
   if (!row.label || dimensions !== 1) return review('variant_combination_unconfirmed');
+  // A new-buyer estimate can precede the regular unit price and MOQ on the same page.
+  // Accept the regular block only when the selected SKU repeats that price.
+  const regular = header.match(
+    /^新人价\s*[¥￥]\s*\d+(?:\.\d{1,2})?\s*\d+件预估到手单价\s+([¥￥]\s*\d+(?:\.\d{1,2})?)\s+(\d[\d,]*\s*[^\d\s]{1,2}起[批订定])(?:\s+(.*))?$/u,
+  );
+  if (
+    regular &&
+    uniqueMoney(regular[1]) === uniqueMoney(numberText(row.price_text)) &&
+    /^(?:(?:\d+[+万千亿]?人想买|已售\d+[+万千亿]?[件个]|\d+[+万千亿]?人收藏)\s*)*$/u.test(regular[3] || '')
+  )
+    header = regular[1] + ' ' + regular[2];
   // The site also displays a range across SKUs, followed directly by their shared MOQ.
   // A separate first-purchase banner may precede that block. Use only the price on the selected SKU row.
   const range = header.match(

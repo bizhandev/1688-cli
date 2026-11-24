@@ -65,8 +65,17 @@ export function sheetValues(result) {
     items.push(line);
     const why = (o.match_evidence?.unresolved || []).map((r) => label.get(r) || r).join(', ');
     const sales = o.factory_sales?.evidence || 'оборот за сопоставимый период не опубликован';
+    const variant = o.variant || 'вариант в карточке не указан';
     notes.push(
-      [line, 'Вариант: ' + o.variant, o.url, why, 'Фабрика: ' + o.factory_evidence, 'Продажи: ' + sales]
+      [
+        line,
+        o.variant ? 'Вариант: ' + o.variant : 'Вариант в карточке не указан.',
+        o.url,
+        o.match_evidence?.scope === 'listing' && 'Сходство оценено по основной фотографии объявления.',
+        why,
+        'Фабрика: ' + o.factory_evidence,
+        'Продажи: ' + sales,
+      ]
         .filter(Boolean)
         .join('\n'),
     );
@@ -83,7 +92,7 @@ export function sheetValues(result) {
       index +
         1 +
         '. ' +
-        o.variant +
+        variant +
         ' — ' +
         (valid
           ? num(o.unit_price_cny) +

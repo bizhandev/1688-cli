@@ -75,6 +75,7 @@ export async function runPhotoSourcing(values) {
           key(JSON.stringify(['sourcing-v4', p.hash, row.title, limit])) + '.json',
         );
         result = await readCache(resultFile);
+        if (result) result = refreshResultQuotes(result);
         if (!result) {
           const previous = await readCache(
             join(

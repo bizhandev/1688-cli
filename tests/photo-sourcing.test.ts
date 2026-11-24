@@ -84,6 +84,13 @@ describe('поиск фабрики по фото', () => {
     expect(quoteVariant(row, '¥10 ~ ¥40 5个起批').price_cny).toBeNull();
     expect(quoteVariant(row, base + ' 活动前￥81-155元').price_cny).toBeNull();
   });
+  it('uses an undiscounted MOQ quote only when the regular block agrees with the SKU row', () => {
+    const row = { label: '110cm', row_text: '110cm\n¥118\n库存1000个', price_text: '¥118', stock_text: '库存1000个' };
+    const header = '新人价 ¥117.60 5件预估到手单价 ¥118.00 5个起批 已售60+个 40+人想买';
+    expect(quoteVariant(row, header)).toMatchObject({ price_cny: 118, min_order: 5, lot_price_cny: 590 });
+    expect(quoteVariant({ ...row, price_text: '¥117.60' }, header).price_cny).toBeNull();
+    expect(quoteVariant(row, header + ' 60天老客价 ¥109').price_cny).toBeNull();
+  });
   it('orders distinct manufacturers by comparable shop sales only inside a confidence tie', () => {
     const sales = (value: number, days = 30) => ({
       scope: 'factory',
