@@ -32,7 +32,7 @@ This is a heuristic index of exported TypeScript interfaces that are likely to m
 | `FeedbackOpts` | `src/commands/feedback.ts` | `message?: string;`<br>`bug?: boolean;`<br>`open?: boolean;`<br>`submit?: boolean;` |
 | `FeedbackResult` | `src/commands/feedback.ts` | `url: string;`<br>`title: string;`<br>`bodyPreview: string;`<br>`submitted: boolean;` |
 | `ImageSearchArgs` | `src/commands/image-search.ts` | `imagePath: string;`<br>`max: number;`<br>`headed?: boolean;` |
-| `ImageSearchOpts` | `src/commands/image-search.ts` | `imagePath: string;`<br>`max?: string;`<br>`profile?: string;`<br>`headed?: boolean;` |
+| `ImageSearchOpts` | `src/commands/image-search.ts` | `imagePath: string;`<br>`max?: string;`<br>`profile?: string;`<br>`firefoxExecutable?: string;`<br>`firefoxProfileDir?: string;`<br>`headed?: boolean;` |
 | `ImageSearchResult` | `src/commands/image-search.ts` | `imageId: string;`<br>`total: number;`<br>`offers: Offer[];` |
 | `InboxArgs` | `src/commands/inbox.ts` | `limit: number;`<br>`unreadOnly: boolean;`<br>`myLoginId: string;`<br>`myMemberId: string;`<br>`headed?: boolean;` |
 | `InboxOpts` | `src/commands/inbox.ts` | `limit?: string;`<br>`unread?: boolean;`<br>`profile?: string;`<br>`headed?: boolean;` |

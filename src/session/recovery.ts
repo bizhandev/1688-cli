@@ -477,6 +477,7 @@ export async function withRecovery<T>(
     try {
       return await operation(attempt);
     } catch (error) {
+      if (error instanceof CliError && error.code === 'CANCELED') throw error;
       lastError = error;
       trace.detach();
       const currentPage = pickPage(ctx);

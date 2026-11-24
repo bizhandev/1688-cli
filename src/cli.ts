@@ -166,6 +166,8 @@ program
   .argument('<imagePathOrUrl>', 'Local file path OR http(s) image URL')
   .option('--max <n>', 'Maximum number of results', '20')
   .option('--profile <name>', 'Profile name (default: default)')
+  .option('--firefox-executable <path>', 'Use an installed Playwright-compatible Firefox with its own profile directory')
+  .option('--firefox-profile-dir <path>', 'Persistent Firefox profile for image search')
   .option('--headed', 'Open a window (fallback for risk control)')
   .action(async (imagePath, opts) => {
     const { run } = await import('./commands/image-search.js');

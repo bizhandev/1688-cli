@@ -142,6 +142,14 @@ the matching profile-scoped daemon status.
 }
 ```
 
+`image-search` reports `RISK_CONTROL` (exit 4) when a slider requires user
+verification. With `--headed` it gives the user up to three minutes in the
+current tab, then resumes the same image search when the site clears the
+challenge. Closing the tab cancels the command (exit 130). An explicit empty
+result on the site produces an empty offer list. If the page supplies neither
+offers nor an empty-state message, the command reports
+`IMAGE_SEARCH_UNAVAILABLE` (exit 13).
+
 `search --deeppro` keeps the normal `search` fields and adds:
 
 ```ts

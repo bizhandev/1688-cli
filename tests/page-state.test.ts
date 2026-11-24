@@ -21,6 +21,27 @@ describe('classifyPageState', () => {
     expect(recoverHintForPageState(state.kind)).toMatch(/--headed/);
   });
 
+  it('recognizes the English slider and an embedded challenge without a redirect', () => {
+    const url = 'https://www.1688.com/';
+    for (const snapshot of [
+      { url, title: 'CAPTCHA Verification' },
+      { url, text: 'Please drag the slider to verify' },
+      { url, visibleChallenge: true },
+    ]) {
+      expect(classifyPageState(snapshot).kind).toBe('risk_challenge');
+    }
+    expect(classifyPageState({ url, text: '直线导轨 滑块' }).kind).toBe('normal_1688_page');
+  });
+
+  it('keeps a broken slider in verification until the site clears it', () => {
+    const state = classifyPageState({
+      url: 'https://www.1688.com/', title: 'CAPTCHA Verification',
+      text: "Oops... something's wrong. Please refresh and try again.",
+    });
+    expect(state.kind).toBe('risk_challenge');
+    expect(state.indicators).toContain('verification-widget-error');
+  });
+
   it('detects risk challenges from punish URLs without page text', () => {
     const state = classifyPageState({
       url: 'https://s.1688.com/youyuan/index.htm/_____tmd_____/punish?x5secdata=abc',

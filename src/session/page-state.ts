@@ -19,12 +19,13 @@ export interface PageSnapshot {
   url: string;
   title?: string | null;
   text?: string;
+  visibleChallenge?: boolean;
 }
 
 const LOGIN_RE = /(?:login\.(?:1688|taobao)\.com|passport\.1688\.com)/i;
 const RISK_URL_RE = /(?:\/punish\b|x5secdata)/i;
 const RISK_TEXT_RE =
-  /(滑块|拖动.*验证|安全验证|验证码|验证一下|检测到.*异常|环境异常|nc[_-]?captcha|请完成验证)/i;
+  /(拖动.{0,30}(滑块|验证)|安全验证|验证码|验证一下|检测到.*异常|环境异常|nc[_-]?captcha|请完成验证|please drag the slider to verify)/i;
 const RATE_LIMIT_TEXT_RE =
   /(访问频繁|请求频繁|操作频繁|稍后再试|访问受限|流量异常|系统繁忙)/i;
 const PAGE_PROBE_TIMEOUT_MS = 1500;
@@ -35,15 +36,23 @@ export function classifyPageState(snapshot: PageSnapshot): PageState {
   const text = snapshot.text ?? '';
   const haystack = `${title ?? ''}\n${text}`;
   const indicators: string[] = [];
-
-  if (LOGIN_RE.test(url)) {
-    indicators.push('login-url');
-    return { kind: 'not_logged_in', url, title, indicators };
+  if (/something[’']s wrong[.。]?\s*please refresh and try again/i.test(text)) {
+    indicators.push('verification-widget-error');
   }
 
   if (RISK_URL_RE.test(url)) {
     indicators.push('risk-url');
     return { kind: 'risk_challenge', url, title, indicators };
+  }
+
+  if (snapshot.visibleChallenge || /^captcha verification$/i.test(title?.trim() ?? '')) {
+    indicators.push(snapshot.visibleChallenge ? 'risk-widget' : 'risk-title');
+    return { kind: 'risk_challenge', url, title, indicators };
+  }
+
+  if (LOGIN_RE.test(url)) {
+    indicators.push('login-url');
+    return { kind: 'not_logged_in', url, title, indicators };
   }
 
   if (RATE_LIMIT_TEXT_RE.test(haystack)) {
@@ -65,30 +74,20 @@ export function classifyPageState(snapshot: PageSnapshot): PageState {
 }
 
 export async function detectPageState(page: Page): Promise<PageState> {
-  const url = page.url();
-  let title: string | null = null;
-  let text = '';
-
-  try {
-    title = await withTimeout(page.title(), {
-      timeoutMs: PAGE_PROBE_TIMEOUT_MS,
-      fallback: null,
-    });
-  } catch {
-    title = null;
-  }
-
-  try {
-    text = await withTimeout(page.evaluate(() => document.body?.innerText ?? ''), {
-      timeoutMs: PAGE_PROBE_TIMEOUT_MS,
-      fallback: '',
-    });
-    if (text.length > 20_000) text = text.slice(0, 20_000);
-  } catch {
-    text = '';
-  }
-
-  return classifyPageState({ url, title, text });
+  const snapshot = await withTimeout(page.evaluate(() => ({
+    url: location.href,
+    title: document.title,
+    text: (document.body?.innerText ?? '').slice(0, 20_000),
+    visibleChallenge: Array.from(document.querySelectorAll(
+      '#nocaptcha, iframe[src*="/punish" i], iframe[src*="/captcha/" i]',
+    )).some(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility === 'visible';
+    }),
+  })), { timeoutMs: PAGE_PROBE_TIMEOUT_MS, fallback: null }).catch(() => null);
+  const state = classifyPageState(snapshot ?? { url: page.url() });
+  if (!snapshot && state.kind === 'normal_1688_page') return { ...state, kind: 'unknown' };
+  return state;
 }
 
 export function recoverHintForPageState(kind: PageStateKind): string | undefined {

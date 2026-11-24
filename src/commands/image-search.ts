@@ -1,22 +1,26 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 import { dispatch } from '../session/dispatch.js';
 import { emit, info } from '../io/output.js';
 import { CliError } from '../io/errors.js';
 import { withRecovery } from '../session/recovery.js';
 import {
   clickImageSearchButton,
-  clickImageUploadButton,
+  selectImageFile,
 } from '../session/image-search-locators.js';
-import { captureSearchOffersForAction } from '../session/search-capture.js';
+import { startSearchOfferCapture } from '../session/search-capture.js';
+import { detectPageState } from '../session/page-state.js';
+import { waitForTruthy, waitUntil, withTimeout } from '../session/wait.js';
 import { type Offer } from './search.js';
 
 export interface ImageSearchOpts {
   imagePath: string;
   max?: string;
   profile?: string;
+  firefoxExecutable?: string;
+  firefoxProfileDir?: string;
   headed?: boolean;
 }
 
@@ -67,6 +71,10 @@ export const IMAGE_SEARCH_RESULT_METHODS = [
   'imageOfferSearchService',
 ] as const;
 
+function captureImageOffers(page: Page) {
+  return startSearchOfferCapture({ page, keep: 'largest', requireMethod: IMAGE_SEARCH_RESULT_METHODS });
+}
+
 export async function execute(
   ctx: BrowserContext,
   args: ImageSearchArgs,
@@ -77,118 +85,150 @@ export async function execute(
     throw new CliError(2, 'BAD_INPUT', `Cannot read image: ${args.imagePath}`);
   }
 
-  return withRecovery(
-    ctx,
-    { cmd: 'image-search', args },
-    () => executeImageSearch(ctx, args),
-    { headed: args.headed === true, maxRetries: 1 },
-  );
+  const page = await ctx.newPage();
+  const captures = new Map([[page, captureImageOffers(page)]]);
+  let resultTab = page;
+  let imageId: string | undefined;
+  const onPopup = (popup: Page) => {
+    resultTab = popup;
+    captures.set(popup, captureImageOffers(popup));
+  };
+  page.on('popup', onPopup);
+  const headed = args.headed === true;
+  try {
+    return await withRecovery(ctx, { cmd: 'image-search', args }, async () => {
+      if (!imageId) {
+        info('Uploading image to 1688...');
+        imageId = await uploadAndGetImageId(page, args.imagePath, headed, () => resultTab, () => {
+          resultTab = page;
+          captures.get(page)!.dispose();
+          captures.set(page, captureImageOffers(page));
+        });
+        info(`Image uploaded (imageId=${imageId}). Fetching results...`);
+      }
+      const offers = await searchByImageId(resultTab, imageId, headed, captures.get(resultTab)!);
+      return { imageId, total: offers.length, offers: offers.slice(0, args.max) };
+    }, { headed, maxRetries: 1 });
+  } finally {
+    page.off('popup', onPopup);
+    for (const capture of captures.values()) capture.dispose();
+    await Promise.all([...captures.keys()].map(tab => tab.close().catch(() => {})));
+  }
 }
 
-async function executeImageSearch(
-  ctx: BrowserContext,
-  args: ImageSearchArgs,
-): Promise<ImageSearchResult> {
-  info('Uploading image to 1688...');
-  const imageId = await uploadAndGetImageId(ctx, args.imagePath);
-  info(`Image uploaded (imageId=${imageId}). Fetching results...`);
+async function imagePageState(page: Page) {
+  if (page.isClosed()) throw new CliError(130, 'CANCELED', 'Image search canceled.');
+  const state = await detectPageState(page);
+  if (state.kind === 'not_logged_in') throw new CliError(3, 'NOT_LOGGED_IN', 'Session expired. Run `1688 login`.');
+  if (state.kind === 'rate_limited') throw new CliError(9, 'RATE_LIMITED', '1688 is rate-limiting this session.');
+  return state;
+}
 
-  const offers = await searchByImageId(ctx, imageId);
-  return {
-    imageId,
-    total: offers.length,
-    offers: offers.slice(0, args.max),
-  };
+async function waitForManualVerification(page: Page, headed: boolean): Promise<boolean> {
+  if ((await imagePageState(page)).kind !== 'risk_challenge') return false;
+  if (!headed) throw new CliError(4, 'RISK_CONTROL', '1688 requires slider verification. Run once with --headed.');
+  process.stderr.write('1688 is asking you to verify. Complete the slider in this tab; image search will resume here.\n');
+  await withTimeout(page.bringToFront().catch(() => {}), { timeoutMs: 1500, fallback: undefined });
+  let reportedWidgetError = false;
+  const cleared = await waitUntil(async () => {
+    const state = await imagePageState(page);
+    if (!reportedWidgetError && state.indicators.includes('verification-widget-error')) {
+      process.stderr.write('1688 reports a verification error and asks you to refresh this tab.\n');
+      reportedWidgetError = true;
+    }
+    return state.kind === 'normal_1688_page';
+  }, { timeoutMs: 180_000, intervalMs: 500 });
+  if (!cleared) throw new CliError(4, 'RISK_CONTROL', '1688 still requires manual verification after 3 minutes.');
+  return true;
+}
+
+function uploadedImageId(page: Page): string | null {
+  const url = new URL(page.url());
+  const id = url.searchParams.get('imageId');
+  return id && /^\d+$/.test(id) && url.hostname === 'air.1688.com' && /\/pc-image-search\/?$/.test(url.pathname) ? id : null;
 }
 
 async function uploadAndGetImageId(
-  ctx: BrowserContext,
-  imagePath: string,
+  page: Page, imagePath: string, headed: boolean, resultTab: () => Page, beforeSubmit: () => void,
 ): Promise<string> {
-  const page = await ctx.newPage();
-  try {
-    page.on('filechooser', async (chooser) => {
-      try {
-        await chooser.setFiles(imagePath);
-      } catch {
-        /* ignore — handled by waitForURL timeout */
-      }
-    });
-
-    await page.goto(IMAGE_SEARCH_UPLOAD_URL, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
-    if (/login\.1688\.com|login\.taobao\.com/.test(page.url())) {
-      throw new CliError(
-        3,
-        'NOT_LOGGED_IN',
-        'Session expired. Run `1688 login`.',
-      );
+  await page.goto(IMAGE_SEARCH_UPLOAD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const reopenForm = async () => {
+    if (new URL(page.url()).hostname === 'www.1688.com') {
+      await page.goto(IMAGE_SEARCH_UPLOAD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     }
+  };
+  if (await waitForManualVerification(page, headed)) await reopenForm();
 
-    await clickImageUploadButton(page);
-
-    await Promise.all([
-      page
-        .waitForURL(/imageId=\d+/, { timeout: 20000 })
-        .catch(() => undefined),
-      clickImageSearchButton(page),
-    ]);
-
-    const match = page.url().match(/imageId=(\d+)/);
-    if (!match) {
-      throw new CliError(
-        13,
-        'UPLOAD_FAILED',
-        'No imageId in URL after upload. Try again or use --headed.',
-      );
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await selectImageFile(page, imagePath);
+      beforeSubmit();
+      await clickImageSearchButton(page);
+      const imageId = await waitForTruthy(async () => {
+        const tab = resultTab();
+        const id = uploadedImageId(tab);
+        if (id) return id;
+        if ((await imagePageState(tab)).kind === 'risk_challenge') {
+          throw new CliError(4, 'RISK_CONTROL', '1688 requested verification during the upload.');
+        }
+        return null;
+      }, { timeoutMs: 20_000 });
+      if (imageId) return imageId;
+      throw new CliError(13, 'UPLOAD_FAILED', '1688 did not return an image ID after upload.');
+    } catch (error) {
+      const tab = resultTab();
+      if (!await waitForManualVerification(tab, headed)) throw error;
+      const imageId = uploadedImageId(tab);
+      if (imageId) return imageId;
+      // A verification redirect can reset the upload form. Resubmit only after the user clears it.
+      if (attempt > 0) throw new CliError(13, 'UPLOAD_FAILED', 'The upload form reset again after verification.');
+      await reopenForm();
     }
-    return match[1]!;
-  } finally {
-    await page.close().catch(() => {});
   }
 }
 
 async function searchByImageId(
-  ctx: BrowserContext,
-  imageId: string,
+  page: Page, imageId: string, headed: boolean, capture: ReturnType<typeof captureImageOffers>,
 ): Promise<Offer[]> {
-  const page = await ctx.newPage();
-
-  try {
-    const captureResult = await captureSearchOffersForAction(
-      { page, keep: 'largest', requireMethod: IMAGE_SEARCH_RESULT_METHODS },
-      async () => {
-        await page.goto(imageSearchResultUrl(imageId), {
-          waitUntil: 'domcontentloaded',
-          timeout: 30000,
-        });
-      },
-      {
-        timeoutMs: 15000,
-        isClosed: () => page.isClosed(),
-        isBlocked: () => /\/punish|x5secdata=/.test(page.url()),
-      },
-    );
+  const waitForOffers = () => capture.wait({
+    timeoutMs: 15_000,
+    isClosed: () => page.isClosed(),
+    isBlocked: async () => (await imagePageState(page)).kind === 'risk_challenge',
+  });
+  const originalUrl = uploadedImageId(page) === imageId ? page.url() : imageSearchResultUrl(imageId);
+  const openResults = () => page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  if (uploadedImageId(page) !== imageId) await openResults();
+  for (let attempt = 0; ; attempt++) {
+    const result = await waitForOffers();
     if (process.env.BB1688_DEBUG === '1') {
-      process.stderr.write(
-        `[image-search] capture status=${captureResult.status} url=${page.url()} ` +
-          `diagnostics=${JSON.stringify(captureResult.diagnostics)}\n`,
-      );
+      const { seenCount, matchedCount, parsedCount } = result.diagnostics;
+      process.stderr.write(`[image-search] ${result.status} seen=${seenCount} matched=${matchedCount} parsed=${parsedCount}\n`);
     }
-    if (captureResult.status === 'browser_closed') {
-      throw new CliError(130, 'CANCELED', 'Browser closed.');
+    if (result.status === 'browser_closed') throw new CliError(130, 'CANCELED', 'Image search canceled.');
+    if (attempt > 0 && result.status === 'blocked') {
+      throw new CliError(4, 'RISK_CONTROL', '1688 requested verification again.');
     }
-    return captureResult.offers;
-  } finally {
-    await page.close().catch(() => {});
+    const verified = await waitForManualVerification(page, headed);
+    if (verified || result.status === 'blocked') {
+      if (uploadedImageId(page) !== imageId) await openResults();
+      continue;
+    }
+    if (result.status === 'captured') return result.offers;
+    const empty = page.getByText(/^(?:暂无搜索结果|未找到相关(?:商品|货源)|没有找到相关(?:商品|货源)|抱歉[，,]?\s*没有找到相关(?:商品|货源))[。！!]?$/);
+    if (uploadedImageId(page) === imageId && await empty.first().isVisible()) return [];
+    throw new CliError(13, 'IMAGE_SEARCH_UNAVAILABLE', '1688 returned neither offers nor an explicit empty result.');
   }
 }
 
 export async function run(opts: ImageSearchOpts): Promise<void> {
   if (!opts.imagePath) {
     throw new CliError(2, 'BAD_INPUT', 'Image path or URL required.');
+  }
+  if (Boolean(opts.firefoxExecutable) !== Boolean(opts.firefoxProfileDir)) {
+    throw new CliError(2, 'BAD_INPUT', 'Use --firefox-executable and --firefox-profile-dir together.');
+  }
+  if (opts.firefoxProfileDir && opts.profile) {
+    throw new CliError(2, 'BAD_INPUT', 'The Firefox profile is already selected with --firefox-profile-dir.');
   }
   const max = Math.max(1, parseInt(opts.max ?? '20', 10));
 
@@ -204,11 +244,23 @@ export async function run(opts: ImageSearchOpts): Promise<void> {
   }
 
   try {
-    const data = await dispatch<ImageSearchArgs, ImageSearchResult>(
-      'image-search',
-      { imagePath: abs, max, headed: opts.headed },
-      { headed: opts.headed, profile: opts.profile },
-    );
+    const args = { imagePath: abs, max, headed: opts.headed };
+    let data: ImageSearchResult;
+    if (opts.firefoxExecutable && opts.firefoxProfileDir) {
+      const { firefox } = await import('playwright');
+      const ctx = await firefox.launchPersistentContext(path.resolve(opts.firefoxProfileDir), {
+        executablePath: path.resolve(opts.firefoxExecutable), headless: !opts.headed,
+      });
+      try {
+        data = await execute(ctx, args);
+      } finally {
+        await ctx.close();
+      }
+    } else {
+      data = await dispatch<ImageSearchArgs, ImageSearchResult>('image-search', args, {
+        headed: opts.headed, profile: opts.profile,
+      });
+    }
     emit({
       human: () => printResults(data),
       data,

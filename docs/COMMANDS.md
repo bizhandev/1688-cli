@@ -13,6 +13,8 @@ checkout -> tracking -> post-sale.
 1688 research <keyword...>        # multi-keyword research, scoring, export
 1688 similar <offerId>            # official 1688 same-product entry point; currently may be unavailable
 1688 image-search <pathOrUrl>     # local .jpg/.png/.webp or http(s) URL
+1688 image-search <pathOrUrl> --headed  # complete a requested slider in the search tab
+1688 image-search <pathOrUrl> --headed --firefox-executable <binary> --firefox-profile-dir <directory>
 1688 offer <offerId>              # product detail, SKUs, price tiers, package info
 1688 offer <offerId...> --pro     # batch details, bypassing daemon health pause
 1688 compare <offerId...>         # compare offer details for sourcing
@@ -20,6 +22,12 @@ checkout -> tracking -> post-sale.
 1688 supplier search <keyword...> # supplier discovery from 1688 company search
 1688 supplier research <keyword...> # supplier scoring + inspect enrichment from company search
 ```
+
+With `image-search --headed`, the CLI keeps the search tab open for up to three
+minutes when 1688 requests a slider. Complete the verification in that tab.
+The CLI reads the results opened by the upload form, including when it opens
+a new tab. The optional Firefox arguments select a local executable and a
+persistent profile directory for this command.
 
 Research-oriented `search` filters:
 
