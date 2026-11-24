@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { identityConfidence, visualConfidence } from '../sourcing/confidence.mjs';
-import { photoRequirements, compareLabel, rankOffers } from '../sourcing/matching.mjs';
+import { photoRequirements, compareLabel, rankOffers, tubeVariants } from '../sourcing/matching.mjs';
 import { quoteVariant, supplierEvidence, readAfterVerification } from '../sourcing/detail.mjs';
 import { sheetValues } from '../sourcing/sheet.mjs';
 
@@ -41,7 +41,10 @@ describe('поиск фабрики по фото', () => {
     let checks = 0;
     const result = await readAfterVerification(
       async () => ({ status: states.shift() }),
-      async () => { checks++; return true; },
+      async () => {
+        checks++;
+        return true;
+      },
     );
     expect(result.status).toBe('ok');
     expect(checks).toBe(2);
@@ -69,6 +72,19 @@ describe('поиск фабрики по фото', () => {
       quoteVariant({ label: '花色85', row_text: '花色85 ¥68', price_text: '¥68' }, '¥68 1000个起批'),
     ).toMatchObject({ price_cny: 68, min_order: 1000, lot_price_cny: 68000 });
   });
+  it('reads a print-name size suffix only when the same listing establishes a diameter range', () => {
+    const req = photoRequirements('Тюбинг 100 см');
+    const v = { label: '-Корги90' };
+    expect(compareLabel(req, tubeVariants([v])[0]).reasons).toContain('sku_size_unconfirmed');
+    const family = tubeVariants([
+      v,
+      { label: 'Оксфорд80 Гжель' },
+      { label: 'Оксфорд 120' },
+      { label: 'Модель90' },
+    ]);
+    expect(compareLabel(req, family[0]).rejected).toBe('wrong_size');
+    expect(family[3]).not.toHaveProperty('catalogue_diameter_cm');
+  });
   it('quotes the selected SKU within the normal price range at MOQ', () => {
     const row = {
       label: '120cm',
@@ -85,7 +101,12 @@ describe('поиск фабрики по фото', () => {
     expect(quoteVariant(row, base + ' 活动前￥81-155元').price_cny).toBeNull();
   });
   it('uses an undiscounted MOQ quote only when the regular block agrees with the SKU row', () => {
-    const row = { label: '110cm', row_text: '110cm\n¥118\n库存1000个', price_text: '¥118', stock_text: '库存1000个' };
+    const row = {
+      label: '110cm',
+      row_text: '110cm\n¥118\n库存1000个',
+      price_text: '¥118',
+      stock_text: '库存1000个',
+    };
     const header = '新人价 ¥117.60 5件预估到手单价 ¥118.00 5个起批 已售60+个 40+人想买';
     expect(quoteVariant(row, header)).toMatchObject({ price_cny: 118, min_order: 5, lot_price_cny: 590 });
     expect(quoteVariant({ ...row, price_text: '¥117.60' }, header).price_cny).toBeNull();
@@ -126,7 +147,8 @@ describe('поиск фабрики по фото', () => {
     };
     const { t, u } = sheetValues({ offers: [offer, b] });
     expect(t.textFormatRuns.map((r) => r.format.link.uri)).toEqual([offer.url, b.url]);
-    expect(t.userEnteredValue.stringValue).toContain('79%');
+    expect(t.userEnteredValue.stringValue).toBe('1. 99%\n2. 79%');
+    expect(t.note).toContain('2. 79% · проверить · Factory B');
     expect(u.userEnteredValue.numberValue).toBe(68);
     expect(u.note.replaceAll(/\s/g, '')).toContain('68000¥');
     const pending = sheetValues({ offers: [b] });

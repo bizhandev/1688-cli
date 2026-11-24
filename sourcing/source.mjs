@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { readCache, saveJson, runtime } from './cache.mjs';
 import { cachedDetail, getDetail, findCards, sellerData, stopCodes } from './catalogue.mjs';
-import { compareLabel, competingOptions, photoRequirements, rankOffers } from './matching.mjs';
+import { compareLabel, competingOptions, photoRequirements, rankOffers, tubeVariants } from './matching.mjs';
 import { identityConfidence, visualConfidence } from './confidence.mjs';
 import { scoreImages } from './visual.mjs';
 import { readPhotoText } from './ocr.mjs';
@@ -127,6 +127,11 @@ function buildOffer(req, card, detail, variant, image, siblings) {
 }
 
 async function compareVariants(photo, req, inspected, localOnly = false) {
+  if (req.tube)
+    inspected = inspected.map(({ card, detail }) => ({
+      card,
+      detail: { ...detail, variants: tubeVariants(detail.variants) },
+    }));
   const variants = [];
   for (const { card, detail } of inspected) {
     if (detail.factory_status === 'trader' || unrelated(req, detail.title)) continue;
@@ -164,19 +169,31 @@ export async function recheckSavedOffers(photo, title, previous) {
       if (unrelated(req, card.title) || /经销批发|招商代理|贸易型/.test(card.biz_type || '')) return null;
       const detail = await cachedDetail(card);
       const observed = Date.parse(detail?.checked_at);
-      if (!(observed > since && observed <= until) || detail.factory_status !== 'verified' || !detail.seller)
-        return null;
+      if (!(observed <= until) || detail.factory_status !== 'verified' || !detail.seller) return null;
       if (req.tube && !snowProduct.test(card.title) && !snowProduct.test(detail.title || '')) return null;
-      return { card, detail };
+      return { card, detail, observed };
     }),
   );
-  const fresh = known.filter(Boolean);
+  const available = known.filter(Boolean);
+  const byUrl = new Map(available.map(({ card, detail }) => [card.url, detail]));
+  const retained = previous.offers.filter((offer) => {
+    const detail = byUrl.get(offer.url);
+    if (!detail || !req.tube || !offer.variant) return true;
+    const variant = tubeVariants(detail.variants).find(
+      (v) => v.id === offer.variant_id && v.label === offer.variant,
+    );
+    return !variant || !compareLabel(req, variant).rejected;
+  });
+  const fresh =
+    retained.length === previous.offers.length
+      ? available.filter((entry) => entry.observed > since)
+      : available;
   if (!fresh.length) return previous;
   const { candidates, compared } = await compareVariants(photo, req, fresh, true);
-  const offers = rankOffers([...previous.offers, ...candidates]);
+  const offers = rankOffers([...retained, ...candidates]);
   return {
     ...previous,
-    status: offers.length ? 'ok' : previous.status,
+    status: offers.length ? 'ok' : 'no_verified_factory_match',
     offers,
     catalogue_reviewed_at: new Date(until).toISOString(),
     rechecked_details: (previous.rechecked_details || 0) + fresh.length,

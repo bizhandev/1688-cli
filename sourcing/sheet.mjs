@@ -59,7 +59,7 @@ export function sheetValues(result) {
     )
       throw Error('Некорректный результат фабрики.');
     const tag = o.identity_confirmed ? 'совпадение' : 'проверить';
-    const line = index + 1 + '. ' + o.match_confidence_pct + '% · ' + tag + ' · ' + o.seller;
+    const line = index + 1 + '. ' + o.match_confidence_pct + '%';
     const start = items.reduce((n, s) => n + s.length + 1, 0);
     runs.push({ startIndex: start, format: { link: { uri: o.url } } });
     items.push(line);
@@ -68,7 +68,7 @@ export function sheetValues(result) {
     const variant = o.variant || 'вариант в карточке не указан';
     notes.push(
       [
-        line,
+        line + ' · ' + tag + ' · ' + o.seller,
         o.variant ? 'Вариант: ' + o.variant : 'Вариант в карточке не указан.',
         o.url,
         o.match_evidence?.scope === 'listing' && 'Сходство оценено по основной фотографии объявления.',

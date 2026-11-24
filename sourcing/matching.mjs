@@ -80,6 +80,23 @@ function sizes(text, isTube, sku = false) {
   return [...numbers];
 }
 
+export function tubeVariants(variants) {
+  const readings = variants.map((v) => sizes(normalize(v.label), true, true));
+  const range = readings.filter((a) => a.length === 1 && a[0] >= 50 && a[0] <= 200).flat();
+  if (new Set(range).size < 2) return variants;
+  const low = Math.min(...range),
+    high = Math.max(...range);
+  return variants.map((variant, i) => {
+    if (readings[i].length) return variant;
+    const end = normalize(variant.label).match(/(?:^|[-\s])([а-я]{3,})(\d{2,3})$/u);
+    if (!end || /^(?:модель|серия|арт|код|тип)$/.test(end[1])) return variant;
+    const size = Number(end[2]);
+    return size >= low && size <= high && size % 5 === 0
+      ? { ...variant, catalogue_diameter_cm: size }
+      : variant;
+  });
+}
+
 function kit(text) {
   const excluded =
     /без\s+(?:резиновой\s+|усиленной\s+)?камер|камер[ауы]?\s+(?:в\s+комплект\s+)?не\s+входит|камера\s+отдельно|(?:不含|不带|无)\s*(?:加厚|加强|橡胶)*内胎|单外套|仅外套|内胎另购/u.test(
@@ -136,6 +153,8 @@ export function compareLabel(req, variant) {
     reasons.push('sku_design_nondeterministic');
   }
   const dimensions = sizes(label, req.tube, true);
+  if (req.tube && !dimensions.length && variant.catalogue_diameter_cm)
+    dimensions.push(variant.catalogue_diameter_cm);
   if (req.sizes_cm.length === 1) {
     if (dimensions.length && !dimensions.includes(req.sizes_cm[0])) return reject('wrong_size');
     if (dimensions.length !== 1) reasons.push('sku_size_unconfirmed');
