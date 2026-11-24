@@ -5,6 +5,7 @@ dist/
 *.log
 .vitest-cache/
 coverage/
+__pycache__/
 
 # OS
 .DS_Store
