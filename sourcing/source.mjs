@@ -126,7 +126,7 @@ function buildOffer(req, card, detail, variant, image, siblings) {
   };
 }
 
-async function compareVariants(photo, req, inspected) {
+async function compareVariants(photo, req, inspected, localOnly = false) {
   const variants = [];
   for (const { card, detail } of inspected) {
     if (detail.factory_status === 'trader' || unrelated(req, detail.title)) continue;
@@ -134,7 +134,7 @@ async function compareVariants(photo, req, inspected) {
       if (!compareLabel(req, v).rejected) variants.push({ id: card.id + '/' + v.id, image_url: v.image_url });
     }
   }
-  const visual = await scoreImages(photo.path, variants);
+  const visual = await scoreImages(photo.path, variants, { localOnly });
   const scores = new Map(visual.scores.map((s) => [s.id, s]));
   const candidates = [];
   for (const { card, detail } of inspected) {
@@ -146,6 +146,42 @@ async function compareVariants(photo, req, inspected) {
     }
   }
   return { candidates, compared: variants.length, model: visual.model };
+}
+
+// A later row may have opened another real listing from this photo's own results.
+// Compare only newly observed SKU photos, keeping the original search and its ranks.
+export async function recheckSavedOffers(photo, title, previous) {
+  const since = Date.parse(previous.catalogue_reviewed_at || previous.checked_at);
+  if (!Number.isFinite(since) || !['ok', 'no_verified_factory_match'].includes(previous.status))
+    return previous;
+  const cards = await readCache(join(runtime, 'search', photo.hash + '.json'));
+  if (!Array.isArray(cards) || !cards.length) return previous;
+  const ocr = await readCache(join(runtime, 'ocr', photo.hash + '.json'), 720);
+  const req = photoRequirements(title, ocr || {});
+  const until = Date.now();
+  const known = await Promise.all(
+    cards.map(async (card) => {
+      if (unrelated(req, card.title) || /经销批发|招商代理|贸易型/.test(card.biz_type || '')) return null;
+      const detail = await cachedDetail(card);
+      const observed = Date.parse(detail?.checked_at);
+      if (!(observed > since && observed <= until) || detail.factory_status !== 'verified' || !detail.seller)
+        return null;
+      if (req.tube && !snowProduct.test(card.title) && !snowProduct.test(detail.title || '')) return null;
+      return { card, detail };
+    }),
+  );
+  const fresh = known.filter(Boolean);
+  if (!fresh.length) return previous;
+  const { candidates, compared } = await compareVariants(photo, req, fresh, true);
+  const offers = rankOffers([...previous.offers, ...candidates]);
+  return {
+    ...previous,
+    status: offers.length ? 'ok' : previous.status,
+    offers,
+    catalogue_reviewed_at: new Date(until).toISOString(),
+    rechecked_details: (previous.rechecked_details || 0) + fresh.length,
+    rechecked_variants: (previous.rechecked_variants || 0) + compared,
+  };
 }
 
 export async function sourcePhoto(context, photo, title, { headed = true, detailLimit = 12 } = {}) {

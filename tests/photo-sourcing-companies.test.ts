@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { sourcePhoto } from '../sourcing/source.mjs';
+import { recheckSavedOffers, sourcePhoto } from '../sourcing/source.mjs';
+import { readCache } from '../sourcing/cache.mjs';
 import { cachedDetail, findCards, getDetail, sellerData } from '../sourcing/catalogue.mjs';
 import { scoreImages } from '../sourcing/visual.mjs';
 
 vi.mock('../sourcing/cache.mjs', () => ({
   runtime: '.',
-  readCache: async () => ({ status: 'ok', text: '' }),
+  readCache: vi.fn(),
   saveJson: vi.fn(),
 }));
 vi.mock('../sourcing/ocr.mjs', () => ({ readPhotoText: vi.fn() }));
@@ -36,6 +37,7 @@ function setScores(scores: number[]) {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(readCache).mockResolvedValue({ status: 'ok', text: '' });
   vi.mocked(cachedDetail).mockResolvedValue(null);
   vi.mocked(findCards).mockResolvedValue(cards);
   vi.mocked(getDetail).mockImplementation(async (_context, card) => ({
@@ -48,6 +50,30 @@ beforeEach(() => {
 });
 
 describe('which factory profiles need opening', () => {
+  it('compares a later cached SKU from this exact search without opening a page', async () => {
+    const original = {
+      status: 'ok',
+      checked_at: '2000-01-01T00:00:00Z',
+      offers: [{ url: cards[0].url, seller: cards[0].seller, search_rank: 1, match_confidence_pct: 52 }],
+    };
+    vi.mocked(readCache).mockImplementation(async (file) => (file.includes('search') ? [cards[3]] : {}));
+    vi.mocked(cachedDetail).mockResolvedValue({
+      status: 'ok',
+      checked_at: '2020-01-01T00:00:00Z',
+      seller: cards[3].seller,
+      factory_status: 'verified',
+      variants: [{ id: 'variant', label: 'Model', image_url: cards[3].image_url }],
+    });
+    setScores([0.5, 0.5, 0.5, 0.88]);
+    const next = await recheckSavedOffers(photo, 'Product', original);
+    expect(next.offers.map((o) => o.url)).toEqual([cards[3].url, cards[0].url]);
+    expect(next.rechecked_details).toBe(1);
+    expect(scoreImages).toHaveBeenCalledWith(photo.path, expect.any(Array), { localOnly: true });
+    expect(findCards).not.toHaveBeenCalled();
+    expect(getDetail).not.toHaveBeenCalled();
+    expect(sellerData).not.toHaveBeenCalled();
+    expect(await recheckSavedOffers(photo, 'Product', next)).toBe(next);
+  });
   it('keeps already verified SKU offers when a new listing photo ranks below all three', async () => {
     vi.mocked(cachedDetail).mockImplementation(async (card) =>
       card.rank === 4

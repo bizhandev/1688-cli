@@ -4,9 +4,17 @@ import { channel } from 'node:diagnostics_channel';
 import { mkdir } from 'node:fs/promises';
 import { runtime, key, readCache, getPhoto, saveJson } from './cache.mjs';
 import { openBrowser, stopCodes } from './catalogue.mjs';
-import { refreshResultQuotes, sourcePhoto } from './source.mjs';
+import { recheckSavedOffers, refreshResultQuotes, sourcePhoto } from './source.mjs';
 import { connectSheet } from './sheet.mjs';
 import { emit } from '../dist/io/output.js';
+
+async function saveToSheet(sheet, input, result) {
+  try {
+    return { sheet: await sheet.save(input, result) };
+  } catch (e) {
+    return { sheet: 'write_error', sheet_error: e.message };
+  }
+}
 
 export async function runPhotoSourcing(values) {
   process.env.BB1688_HOME ||= dirname(runtime);
@@ -44,6 +52,7 @@ export async function runPhotoSourcing(values) {
   let context;
   const browser = async () => (context ??= await openBrowser(!values.headless));
   const results = [];
+  const review = [];
   const started = Date.now();
   const verification = channel('1688.manual-verification');
   let requests = 0;
@@ -75,6 +84,7 @@ export async function runPhotoSourcing(values) {
           key(JSON.stringify(['sourcing-v4', p.hash, row.title, limit])) + '.json',
         );
         result = await readCache(resultFile);
+        if (result?.checked_at && Date.now() - Date.parse(result.checked_at) > 24 * 3600_000) result = null;
         if (result) result = refreshResultQuotes(result);
         if (!result) {
           const previous = await readCache(
@@ -92,6 +102,8 @@ export async function runPhotoSourcing(values) {
           if (['ok', 'no_matches', 'no_verified_factory_match'].includes(result.status))
             await saveJson(resultFile, result);
         }
+        if (result.checked_at && ['ok', 'no_verified_factory_match'].includes(result.status))
+          review.push({ index: results.length, photo: p, path: resultFile, original: result });
       } catch (e) {
         const message = String(e.message)
           .split('\n')[0]
@@ -106,13 +118,8 @@ export async function runPhotoSourcing(values) {
       const publishable =
         ['ok', 'no_matches', 'no_verified_factory_match', 'image_error'].includes(result.status) ||
         (result.status === 'interrupted' && result.offers.length > 0);
-      if (sheet && values.write && publishable) {
-        try {
-          result = { ...result, sheet: await sheet.save(input, result) };
-        } catch (e) {
-          result = { ...result, sheet: 'write_error', sheet_error: e.message };
-        }
-      }
+      if (sheet && values.write && publishable)
+        result = { ...result, ...(await saveToSheet(sheet, input, result)) };
       results.push({
         ...input,
         ...result,
@@ -134,6 +141,29 @@ export async function runPhotoSourcing(values) {
       if (result.gate || result.sheet === 'write_error') {
         process.exitCode = 2;
         break;
+      }
+    }
+    if (results.length === rows.length && !results.some((r) => r.gate || r.sheet === 'write_error')) {
+      for (const entry of review) {
+        const row = results[entry.index],
+          reviewStart = Date.now();
+        const refined = await recheckSavedOffers(entry.photo, row.title, entry.original);
+        if (refined === entry.original) continue;
+        await saveJson(entry.path, refined);
+        const changed = JSON.stringify(refined.offers) !== JSON.stringify(entry.original.offers);
+        const saved = changed && sheet && values.write ? await saveToSheet(sheet, row, refined) : {};
+        results[entry.index] = {
+          ...row,
+          ...refined,
+          ...saved,
+          duration_ms: row.duration_ms + Date.now() - reviewStart,
+        };
+        if (changed && row.row) console.error('Уточнён подбор для строки ' + row.row);
+        if (values.output) await saveJson(values.output, sheet ? report() : results[0]);
+        if (saved.sheet === 'write_error') {
+          process.exitCode = 2;
+          break;
+        }
       }
     }
     if (!values.output || !sheet || values.get || values.pick || values.jsonV2) {

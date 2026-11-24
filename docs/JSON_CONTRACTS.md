@@ -223,6 +223,9 @@ Confidence is an uncalibrated visual and attribute score from 0 to 100. The
 quote applies to the selected SKU at its minimum order quantity. Shop sales
 can break a tie within three confidence points when the metric and time
 window match. An interrupted result can retain previously inspected offers.
+When later rows supply additional SKU images from this same search, the
+result records `catalogue_reviewed_at`, `rechecked_details` and
+`rechecked_variants` after comparing the saved images locally.
 
 ## `research`
 

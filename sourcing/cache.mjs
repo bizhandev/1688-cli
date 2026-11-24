@@ -32,13 +32,18 @@ export async function saveJson(file, data) {
   }
 }
 
+export async function cachedPhoto(source) {
+  const record = await readCache(join(runtime, 'photos', key(source) + '.json'));
+  return record && (await stat(record.path).catch(() => null)) ? record : null;
+}
+
 export async function getPhoto(source) {
   const dir = join(runtime, 'photos');
   await mkdir(dir, { recursive: true });
   const remote = /^https?:\/\//i.test(source);
   const ref = join(dir, key(source) + '.json');
-  const cached = remote && (await readCache(ref));
-  if (cached && (await stat(cached.path).catch(() => null))) return cached;
+  const cached = remote && (await cachedPhoto(source));
+  if (cached) return cached;
   const temp = await mkdtemp(join(dir, '.download-'));
   try {
     const local = await preparePhoto(source, temp);

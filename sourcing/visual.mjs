@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getPhoto, runtime } from './cache.mjs';
+import { cachedPhoto, getPhoto, runtime } from './cache.mjs';
 
 const ranker = fileURLToPath(new URL('./visual_rank.py', import.meta.url));
 
-async function imagePath(candidate) {
+async function imagePath(candidate, localOnly) {
   if (candidate.image_path) return resolve(candidate.image_path);
+  const loadPhoto = localOnly ? cachedPhoto : getPhoto;
   const original = new URL(candidate.image_url);
   if (original.protocol === 'http:' && original.hostname.endsWith('.alicdn.com'))
     original.protocol = 'https:';
@@ -19,13 +20,15 @@ async function imagePath(candidate) {
       /(\.(?:jpg|jpeg|png|webp))_(?:sum|\d+x\d+[^/]*)\.(?:jpg|webp)$/i,
       '$1',
     );
-    const large = await getPhoto(full.href).catch(() => null);
+    const large = await loadPhoto(full.href).catch(() => null);
     if (large) return large.path;
   }
-  return (await getPhoto(original.href)).path;
+  const photo = await loadPhoto(original.href);
+  if (!photo) throw Error('Изображение варианта отсутствует в локальной копии.');
+  return photo.path;
 }
 
-export async function scoreImages(query, candidates) {
+export async function scoreImages(query, candidates, { localOnly = false } = {}) {
   const files = new Map(),
     inputs = [],
     result = [];
@@ -34,7 +37,7 @@ export async function scoreImages(query, candidates) {
       candidates.slice(i, i + 5).map(async (c) => {
         const id = c.image_path || c.image_url;
         if (!id) return;
-        if (!files.has(id)) files.set(id, imagePath(c));
+        if (!files.has(id)) files.set(id, imagePath(c, localOnly));
         try {
           inputs.push({ id: c.id, path: await files.get(id) });
         } catch {
