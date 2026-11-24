@@ -51,6 +51,12 @@ describe('classifyPageState', () => {
     expect(state.kind).toBe('risk_challenge');
     expect(state.indicators).toContain('risk-url');
   });
+  it('keeps an empty refreshing document pending and a visible slider in verification', () => {
+    const url = 'https://detail.1688.com/offer/123.html';
+    expect(classifyPageState({ url, documentReady: false }).kind).toBe('unknown');
+    expect(classifyPageState({ url, documentReady: false, visibleChallenge: true }).kind).toBe('risk_challenge');
+    expect(classifyPageState({ url, documentReady: true, text: '商品详情' }).kind).toBe('normal_1688_page');
+  });
 
   it('detects rate limiting before normal 1688 pages', () => {
     const state = classifyPageState({

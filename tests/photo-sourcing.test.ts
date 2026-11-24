@@ -29,12 +29,22 @@ describe('поиск фабрики по фото', () => {
       const snapshots = [{ status: 'verification_required' }, { status: after }];
       expect(
         await readAfterVerification(
-          async () => snapshots.shift(),
+          async () => snapshots.shift() ?? { status: after },
           async () => false,
         ),
       ).toEqual({ status: after });
       expect(snapshots).toHaveLength(0);
     }
+  });
+  it('keeps the same tab open when a second slider appears after an accepted check', async () => {
+    const states = ['verification_required', 'verification_required', 'ok'];
+    let checks = 0;
+    const result = await readAfterVerification(
+      async () => ({ status: states.shift() }),
+      async () => { checks++; return true; },
+    );
+    expect(result.status).toBe('ok');
+    expect(checks).toBe(2);
   });
   it('distinguishes missing, weak and full-frame evidence', () => {
     expect(visualConfidence({ score: null })).toBeNull();

@@ -547,12 +547,19 @@ async function combinations(page, initial, maxColorChoices) {
   };
 }
 
-export async function readAfterVerification(read, waitForUser) {
-  const first = await read();
-  if (first.status !== 'verification_required' || !waitForUser) return first;
-  await waitForUser();
-  // Re-read even if the actual widget disappeared before the wait began.
-  return read();
+export async function readAfterVerification(read, waitForUser, timeoutMs = 15 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = await read();
+  let missed = 0;
+  while (snapshot.status === 'verification_required' && waitForUser && Date.now() < deadline) {
+    const cleared = await waitForUser(Math.max(1, deadline - Date.now()));
+    // A page refresh can clear one widget and load another while reading the SKU.
+    // Only the user can clear a visible challenge. Always re-read its result.
+    snapshot = await read();
+    missed = cleared ? 0 : missed + 1;
+    if (missed >= 2) break;
+  }
+  return snapshot;
 }
 
 export async function inspectOffer(page, offer, { maxColorChoices = 12 } = {}) {
@@ -640,7 +647,7 @@ export async function enrichSupplier(context, detail, manualCheck) {
         .catch(() => {});
       const ui = await readAfterVerification(
         () => page.evaluate(readOfferUi, 'profile'),
-        manualCheck && (() => manualCheck(page, 'verification_required', 'supplier', store.hostname)),
+        manualCheck && ((remainingMs) => manualCheck(page, remainingMs)),
       );
       if (ui.status !== 'ok') return result(ui.status);
       if (!safeStoreUrl(page.url(), store.hostname)) return result('different_profile');
@@ -658,6 +665,7 @@ export async function enrichSupplier(context, detail, manualCheck) {
     }
     return result('checked');
   } catch (error) {
+    if (error.exitCode != null) throw error;
     return result(error.name === 'TimeoutError' ? 'profile_timeout' : 'profile_read_error');
   } finally {
     await page.close();

@@ -194,7 +194,8 @@ export async function sourcePhoto(context, photo, title, { headed = true, detail
   const candidates = initial.candidates;
   let compared = initial.compared,
     model = initial.model || images.model,
-    gate;
+    gate,
+    interruptedAt;
   const failures = [];
   // Compare actual SKU photos first. Open a new listing only while its visible
   // photo can put that seller in the top three, or the shortlist is exhaustive.
@@ -225,6 +226,7 @@ export async function sourcePhoto(context, photo, title, { headed = true, detail
       } catch (e) {
         if (stopCodes.has(e.code)) {
           gate = e.code;
+          interruptedAt = { stage: 'offer', url: card.url };
           break;
         }
         failures.push({ url: card.url, status: e.code || 'detail_error' });
@@ -257,8 +259,10 @@ export async function sourcePhoto(context, photo, title, { headed = true, detail
           facts.factory_status === 'verified';
       }
     } catch (e) {
-      if (stopCodes.has(e.code)) gate = e.code;
-      else failures.push({ url: offer.url, status: 'supplier_profile_unavailable' });
+      if (stopCodes.has(e.code)) {
+        gate = e.code;
+        interruptedAt = { stage: 'supplier', url: offer.shop_url || offer.url };
+      } else failures.push({ url: offer.url, status: 'supplier_profile_unavailable' });
     }
   }
   // Check a company profile only after its offer can enter the first three.
@@ -294,7 +298,7 @@ export async function sourcePhoto(context, photo, title, { headed = true, detail
         : inspected.length
           ? 'no_verified_factory_match'
           : 'details_unavailable',
-    ...(gate ? { gate } : {}),
+    ...(gate ? { gate, interrupted_at: interruptedAt } : {}),
     offers,
     unverified_suppliers: rankOffers(unknown.filter((o) => o.factory_status === 'unknown')),
     candidates_found: cards.length,

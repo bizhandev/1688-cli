@@ -20,12 +20,13 @@ export interface PageSnapshot {
   title?: string | null;
   text?: string;
   visibleChallenge?: boolean;
+  documentReady?: boolean;
 }
 
 const LOGIN_RE = /(?:login\.(?:1688|taobao)\.com|passport\.1688\.com)/i;
-const RISK_URL_RE = /(?:\/punish\b|x5secdata)/i;
+const RISK_URL_RE = /(?:\/(?:punish|captcha)(?:[/?#]|$)|x5secdata)/i;
 const RISK_TEXT_RE =
-  /(拖动.{0,30}(滑块|验证)|安全验证|验证码|验证一下|检测到.*异常|环境异常|nc[_-]?captcha|请完成验证|please drag the slider to verify)/i;
+  /(拖动.{0,30}(滑块|验证)|请按住滑块|安全验证|验证码|验证一下|检测到.*异常|环境异常|nc[_-]?captcha|请完成验证|please drag the slider to verify)/i;
 const RATE_LIMIT_TEXT_RE =
   /(访问频繁|请求频繁|操作频繁|稍后再试|访问受限|流量异常|系统繁忙)/i;
 const PAGE_PROBE_TIMEOUT_MS = 1500;
@@ -66,6 +67,7 @@ export function classifyPageState(snapshot: PageSnapshot): PageState {
   }
 
   if (/\.1688\.com/i.test(url)) {
+    if (snapshot.documentReady === false) return { kind: 'unknown', url, title, indicators: ['document-loading'] };
     indicators.push('1688-url');
     return { kind: 'normal_1688_page', url, title, indicators };
   }
@@ -78,6 +80,7 @@ export async function detectPageState(page: Page): Promise<PageState> {
     url: location.href,
     title: document.title,
     text: (document.body?.innerText ?? '').slice(0, 20_000),
+    documentReady: document.readyState !== 'loading' && Boolean(document.body?.innerText?.trim()),
     visibleChallenge: Array.from(document.querySelectorAll(
       '#nocaptcha, iframe[src*="/punish" i], iframe[src*="captcha" i]',
     )).some(el => {

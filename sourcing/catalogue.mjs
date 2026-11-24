@@ -65,22 +65,8 @@ export async function sellerData(context, detail, headed, fetchIfMissing) {
   const file = join(runtime, 'suppliers', key(JSON.stringify([detail.shop_url, detail.seller])) + '.json');
   const cached = await readCache(file);
   if (cached || !fetchIfMissing) return cached;
-  let barrier;
-  const onCheck = async (tab, status) => {
-    if (status === 'login_required') {
-      barrier = gateError(status);
-      return false;
-    }
-    try {
-      await waitForManualVerification(tab, headed, manualVerificationMs);
-      return true;
-    } catch (e) {
-      barrier = e;
-      return false;
-    }
-  };
+  const onCheck = (tab, remainingMs) => waitForManualVerification(tab, headed, remainingMs);
   const profile = await enrichSupplier(await context(), detail, onCheck);
-  if (barrier) throw barrier;
   if (['verification_required', 'login_required'].includes(profile.supplier_check_status))
     throw gateError(profile.supplier_check_status);
   const store = {
@@ -125,9 +111,10 @@ export async function getDetail(context, card, headed) {
       await open();
     const detail = await readAfterVerification(
       () => inspectOffer(page, card),
-      async () => {
-        const cleared = await waitForManualVerification(page, headed, manualVerificationMs);
+      async (remainingMs) => {
+        const cleared = await waitForManualVerification(page, headed, remainingMs);
         if (cleared && new URL(page.url()).pathname !== new URL(card.url).pathname) await open();
+        return cleared;
       },
     );
     if (['verification_required', 'login_required'].includes(detail.status)) throw gateError(detail.status);

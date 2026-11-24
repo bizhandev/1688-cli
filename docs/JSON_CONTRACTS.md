@@ -208,6 +208,7 @@ that array also names its row, source image, SKU and sheet write outcome.
   status: "ok" | "no_matches" | "no_verified_factory_match" | "details_unavailable"
     | "image_error" | "search_error" | "interrupted",
   gate?: "RISK_CONTROL" | "NOT_LOGGED_IN" | "RATE_LIMITED" | "CANCELED",
+    interrupted_at?: { stage: "offer" | "supplier", url: string },
   offers: Array<{
     url: string, seller: string, variant: string, search_rank: number,
     match_confidence_pct: number, identity_confirmed: boolean,

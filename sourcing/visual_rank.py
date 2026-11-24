@@ -112,7 +112,7 @@ def score(payload, path):
         )
     cache = Path(payload["cache"]) / ("features-v2-" + REVISION[:7])
     cache.mkdir(parents=True, exist_ok=True)
-    cv2.setNumThreads(1)
+    cv2.setNumThreads(min(4, os.cpu_count() or 1))
     detector = cv2.SIFT_create(nfeatures=1100, contrastThreshold=0.025)
     matcher = cv2.BFMatcher(cv2.NORM_L2)
 
