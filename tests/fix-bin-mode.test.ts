@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixBinMode } from '../scripts/fix_bin_mode.mjs';
 
 let tmpDir: string;
@@ -11,6 +11,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -29,15 +30,16 @@ describe('fix_bin_mode', () => {
   it('chmods the bin file on Unix-like platforms', async () => {
     const target = path.join(tmpDir, 'cli.js');
     await fs.writeFile(target, '#!/usr/bin/env node\n');
+    const chmod = vi.spyOn(fs, 'chmod');
 
     const result = await fixBinMode({ platform: 'linux', target });
-    const mode = (await fs.stat(target)).mode & 0o777;
 
     expect(result).toEqual({
       changed: true,
       reason: 'chmod-755',
       target,
     });
-    expect(mode).toBe(0o755);
+    expect(chmod).toHaveBeenCalledWith(target, 0o755);
+    if (process.platform !== 'win32') expect((await fs.stat(target)).mode & 0o777).toBe(0o755);
   });
 });
